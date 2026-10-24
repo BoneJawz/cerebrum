@@ -1,0 +1,13 @@
+seed,split,comparison,difference_h9_px
+42,observed,F_minus_G,-0.14513900481033915
+1051,observed,F_minus_G,0.7716026643864673
+42,heldout,F_minus_G,3.8650849550334385
+1051,heldout,F_minus_G,-11.158238521357681
+42,observed,F_minus_H,-0.14513900481033915
+1051,observed,F_minus_H,0.7716026643864673
+42,heldout,F_minus_H,3.8650849550334385
+1051,heldout,F_minus_H,-11.158238521357681
+42,observed,F_minus_FF_direct,-0.23486952239405845
+1051,observed,F_minus_FF_direct,-2.0422793365996377
+42,heldout,F_minus_FF_direct,4.753266952369316
+1051,heldout,F_minus_FF_direct,-5.266984172623417

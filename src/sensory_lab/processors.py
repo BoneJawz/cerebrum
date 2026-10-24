@@ -1,6 +1,7 @@
 """Interchangeable processing substrates; readout training is separate."""
 from collections import deque
 import numpy as np
+import time
 from .contracts import Observation
 
 
@@ -90,17 +91,36 @@ class CoupledDynamics(Base):
 
 class EventDrivenDynamics(Base):
     name = "D_event_driven"
-    def __init__(self, pixels=33, hidden=64, seed=7, threshold=0.04):
+    def __init__(self, pixels=33, hidden=64, seed=7, threshold=0.04,
+                 instrument_costs=False):
         self.threshold = threshold
+        self.instrument_costs = instrument_costs
         super().__init__(pixels, hidden, seed)
+    def reset(self):
+        super().reset()
+        self.update_opportunities = 0
+        self.skipped_updates = 0
+        self.trigger_check_wall_ns = 0
+        self.state_update_wall_ns = 0
     def step(self, o):
         dt = self._dt(o.t)
         u = self.input_features(o)
+        check_start = time.perf_counter_ns() if self.instrument_costs else 0
         trigger = self._last_input is None or np.linalg.norm(u - self._last_input) > self.threshold
+        if self.instrument_costs:
+            self.trigger_check_wall_ns += time.perf_counter_ns() - check_start
+        if self.instrument_costs:
+            self.update_opportunities += 1
         if trigger:
             # Cheap event-triggered state update. Not a continuous-time solver.
+            update_start = time.perf_counter_ns() if self.instrument_costs else 0
             self.state += min(1.0, 12.0*dt) * (-self.state + np.tanh(self.a @ self.state + self.w @ u))
             self._updates += 1
+            if self.instrument_costs:
+                self.state_update_wall_ns += time.perf_counter_ns() - update_start
+        else:
+            if self.instrument_costs:
+                self.skipped_updates += 1
         self._last_input = u.copy()
         return np.concatenate([self.state, u])
 

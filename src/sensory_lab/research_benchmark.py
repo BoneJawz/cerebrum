@@ -52,8 +52,8 @@ class ResearchConfig:
             raise ValueError("train_sizes must be strictly increasing positive integers")
         if not self.horizons or min(self.horizons) < 1:
             raise ValueError("horizons must be positive motion-interval counts")
-        if self.prediction_tick >= MOTION_START_TICK:
-            raise ValueError("prediction inputs must end before motion begins")
+        if not 0 <= self.prediction_tick < MOTION_START_TICK:
+            raise ValueError("prediction_tick must be a nonnegative pre-motion tick")
         all_pairs = {(d, v) for d in (-1, 1) for v in self.velocities}
         held = set(self.heldout_combinations)
         if not held or not held < all_pairs:

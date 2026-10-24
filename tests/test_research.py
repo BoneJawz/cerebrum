@@ -5,6 +5,11 @@ from sensory_lab.environment import LineWorld, MOTION_START_TICK, WorldConfig
 from sensory_lab.research_benchmark import (
     ResearchConfig, extract_matrix, fit_validate_predict, make_split, run_all,
 )
+from sensory_lab.diagnostics import (
+    DiagnosticConfig, _fit_factor_probes, _predict_factorized,
+    run_diagnostics,
+)
+from sensory_lab.processors import EventDrivenDynamics
 
 
 def small_config():
@@ -115,3 +120,67 @@ def test_advanced_outputs_and_reproducibility(tmp_path):
     g2 = {(r['model'],r['modality'],r['horizon_intervals'],r['evaluation_split']):r['mae_pixels_mean']
           for r in second['generalization']}
     assert g1 == g2
+
+
+def test_isolated_phase_and_frequency_probes_generalize_to_heldout_pairs():
+    config = ResearchConfig(
+        seed=7, seeds=2, train_sizes=(20, 50), generalization_train_episodes=100,
+        validation_per_combo=10, test_per_combo=10, hidden=8, timed_repeats=2,
+    )
+    split = make_split(config, 7)
+    probes = _fit_factor_probes(config, split, split.train_pool[:100], 7)
+    predicted_position, predicted_direction, predicted_speed = _predict_factorized(
+        probes, split.heldout_test, config, split, 7)
+    true_position = np.asarray([x['initial_position'] for x in split.heldout_test])
+    true_direction = np.asarray([x['direction'] for x in split.heldout_test])
+    true_speed = np.asarray([x['velocity'] for x in split.heldout_test])
+    assert np.mean(np.abs(predicted_position - true_position)) < 1e-12
+    assert np.mean(predicted_direction == true_direction) >= 0.95
+    assert np.mean(predicted_speed == true_speed) >= 0.95
+    label_mutated = [dict(item, initial_position=999, direction=-item['direction'],
+                          velocity=max(config.velocities))
+                     for item in split.heldout_test]
+    altered_predictions = _predict_factorized(probes, label_mutated, config, split, 7)
+    for original, altered in zip((predicted_position, predicted_direction, predicted_speed),
+                                 altered_predictions):
+        np.testing.assert_array_equal(original, altered)
+
+
+def test_event_threshold_counts_and_instrumentation_preserve_dynamics():
+    split = make_split(small_config(), 31)
+    observations = split.heldout_test[0]['observations'][:5]
+    low = EventDrivenDynamics(pixels=split.world_config.pixels, hidden=8,
+                             seed=9, threshold=0.0, instrument_costs=True)
+    high = EventDrivenDynamics(pixels=split.world_config.pixels, hidden=8,
+                              seed=9, threshold=1e6, instrument_costs=True)
+    plain = EventDrivenDynamics(pixels=split.world_config.pixels, hidden=8,
+                               seed=9, threshold=0.0, instrument_costs=False)
+    for observation in observations:
+        np.testing.assert_array_equal(low.step(observation), plain.step(observation))
+        high.step(observation)
+    assert low.update_opportunities == 5
+    assert low.updates == 5
+    assert high.update_opportunities == 5
+    assert high.updates == 1
+    assert high.skipped_updates == 4
+
+
+def test_diagnostic_runner_writes_auditable_artifacts(tmp_path):
+    research = ResearchConfig(
+        seed=11, seeds=2, train_sizes=(10, 20), generalization_train_episodes=30,
+        validation_per_combo=3, test_per_combo=3, hidden=8, timed_repeats=2,
+    )
+    config = DiagnosticConfig(
+        research=research, event_thresholds=(0.0, 0.1, 0.5),
+        mlp_hidden=4, mlp_max_epochs=10, mlp_patience=3,
+        pairwise_features_per_modality=3,
+    )
+    result = run_diagnostics(config, tmp_path / 'diagnostics')
+    for name in ('diagnostic_results.csv', 'factor_probe_results.csv',
+                 'internal_factor_probe_results.csv', 'readout_diagnostics.csv',
+                 'event_threshold_results.csv',
+                 'error_decomposition.csv', 'paired_architecture_differences.csv',
+                 'prediction_vs_actual.png', 'horizon_error.png',
+                 'event_accuracy_cost.png', 'DIAGNOSTIC_REPORT.md'):
+        assert (tmp_path / 'diagnostics' / name).exists()
+    assert result['diagnostic_rows']

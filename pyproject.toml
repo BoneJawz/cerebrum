@@ -13,5 +13,7 @@ dev = ["pytest>=7", "matplotlib>=3.7"]
 sensory-lab = "sensory_lab.cli:main"
 sensory-lab-viewer = "sensory_lab.viewer:main"
 sensory-lab-research = "sensory_lab.advanced_cli:main"
+sensory-lab-diagnose = "sensory_lab.diagnostic_cli:main"
+sensory-lab-adaptive = "sensory_lab.adaptive_cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
