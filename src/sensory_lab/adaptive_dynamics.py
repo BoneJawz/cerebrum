@@ -81,6 +81,7 @@ class TrainableStateModel:
         self.updates = 0
         self.opportunities = 0
         self.skipped = 0
+        self.candidate_seconds = 0.0
         self.trigger_seconds = 0.0
         self.state_seconds = 0.0
 
@@ -96,44 +97,58 @@ class TrainableStateModel:
             return h + alpha * (q - h), q, alpha
         return q, q, 1.0
 
-    def _encode(self, x):
+    def _encode(self, x, observation_mask=None):
         p = self.params
         h = np.zeros((x.shape[1], self.hidden))
         states = []
-        for xt in x:
-            h = np.tanh(xt @ p["wx"] + h @ p["wh"] + p["b"])
+        for tick,xt in enumerate(x):
+            proposed=np.tanh(xt @ p["wx"] + h @ p["wh"] + p["b"])
+            active=(np.ones(len(h),dtype=bool) if observation_mask is None
+                    else observation_mask[tick])
+            h=np.where(active[:,None],proposed,h)
             states.append(h)
         return h, states
 
     def predict_rollout(self, x, horizons=(3, 6, 9, 12, 18),
-                        event_threshold=None, measure=False):
+                        event_threshold=None, measure=False, observation_mask=None):
         """Process observed inputs, then evolve autonomously with shared weights."""
-        x = (np.asarray(x) - self.input_mean) / self.input_scale
-        h, _ = self._encode(x.transpose(1, 0, 2))
+        raw=np.asarray(x)
+        mask=(np.ones(raw.shape[:2],dtype=bool) if observation_mask is None
+              else np.asarray(observation_mask,dtype=bool))
+        if mask.shape!=raw.shape[:2]:
+            raise ValueError("observation_mask must match batch and sequence dimensions")
+        x=(raw-self.input_mean)/self.input_scale
+        x[~mask]=0.0
+        h, _ = self._encode(x.transpose(1, 0, 2),mask.T)
         wanted = set(horizons)
         max_h = max(wanted)
         predictions = {}
         threshold = self.event_threshold if event_threshold is None else event_threshold
         self.updates = self.opportunities = self.skipped = 0
-        self.trigger_seconds = self.state_seconds = 0.0
+        self.candidate_seconds = self.trigger_seconds = self.state_seconds = 0.0
         for step in range(1, max_h + 1):
             for _substep in range(self.substeps):
                 start = time.perf_counter()
                 candidate, _, _ = self._transition(h)
+                candidate_ready = time.perf_counter()
                 if not np.all(np.isfinite(candidate)) or np.max(np.abs(candidate)) > 1e6:
                     raise FloatingPointError("non-finite or divergent state during autonomous rollout")
-                state_start = time.perf_counter()
+                self.candidate_seconds += max(0.0,candidate_ready-start)
                 if threshold is None:
+                    state_start=time.perf_counter()
                     h = candidate
                     self.updates += len(h)
+                    self.state_seconds += time.perf_counter()-state_start
                 else:
                     self.opportunities += len(h)
+                    detection_start=time.perf_counter()
                     trigger = np.linalg.norm(candidate - h, axis=1) > threshold
+                    state_start=time.perf_counter()
+                    self.trigger_seconds += max(0.0,state_start-detection_start)
                     h = np.where(trigger[:, None], candidate, h)
                     self.updates += int(np.sum(trigger))
                     self.skipped += int(len(h) - np.sum(trigger))
-                    self.trigger_seconds += max(0.0, state_start - start)
-                self.state_seconds += time.perf_counter() - state_start
+                    self.state_seconds += time.perf_counter()-state_start
             if step in wanted:
                 predictions[step] = (h @ self.params["dec"] + self.params["out"][0]) * self.target_scale + self.target_mean
         return predictions
@@ -143,10 +158,12 @@ class DirectTrajectoryBaseline:
     """Parameter-matched tanh MLP with one direct output per training horizon."""
     kind = "FF_direct"
 
-    def __init__(self, input_dim, seed=0, hidden=8):
+    def __init__(self, input_dim, seed=0, hidden=8, sequence_length=5):
         rng = np.random.default_rng(seed)
         self.hidden = hidden
-        self.params = {"wx":rng.normal(0,1/np.sqrt(input_dim*5),(input_dim*5,hidden)),
+        self.input_dim=input_dim
+        self.sequence_length=sequence_length
+        self.params = {"wx":rng.normal(0,1/np.sqrt(input_dim*sequence_length),(input_dim*sequence_length,hidden)),
                        "b":np.zeros(hidden),
                        "out":rng.normal(0,1/np.sqrt(hidden),(hidden,TRAIN_HORIZON)),
                        "bo":np.zeros(TRAIN_HORIZON)}
@@ -161,12 +178,18 @@ class DirectTrajectoryBaseline:
     def _state(self,x):
         return np.tanh(x.reshape(len(x),-1) @ self.params["wx"] + self.params["b"])
 
-    def _encode(self,time_major_x):
+    def _encode(self,time_major_x,observation_mask=None):
         state=self._state(time_major_x.transpose(1,0,2))
         return state,[state]
 
-    def predict_rollout(self,x,horizons=(3,6,9,12)):
-        z=(np.asarray(x)-self.input_mean)/self.input_scale
+    def predict_rollout(self,x,horizons=(3,6,9,12),observation_mask=None):
+        raw=np.asarray(x)
+        mask=(np.ones(raw.shape[:2],dtype=bool) if observation_mask is None
+              else np.asarray(observation_mask,dtype=bool))
+        if mask.shape!=raw.shape[:2]:
+            raise ValueError("observation_mask must match batch and sequence dimensions")
+        z=(raw-self.input_mean)/self.input_scale
+        z[~mask]=0.0
         out=self._state(z)@self.params["out"]+self.params["bo"]
         self.updates=len(x); self.opportunities=self.skipped=0
         return {h:out[:,h-1]*self.target_scale+self.target_mean for h in horizons if h<=TRAIN_HORIZON}
@@ -215,10 +238,14 @@ def prepare_examples(examples, modality, pixels):
     return np.asarray(xs), np.asarray(ys, dtype=float)
 
 
-def _batch_grad(model, xb, yb):
+def _batch_grad(model, xb, yb, observation_mask=None):
     """BPTT gradients through the observed encoder and autonomous rollout."""
     p, batch = model.params, len(xb)
-    state, enc_states = model._encode(xb.transpose(1, 0, 2))
+    mask=(np.ones(xb.shape[:2],dtype=bool) if observation_mask is None
+          else np.asarray(observation_mask,dtype=bool))
+    if mask.shape != xb.shape[:2]:
+        raise ValueError("observation_mask must match batch and sequence dimensions")
+    state, enc_states = model._encode(xb.transpose(1, 0, 2),mask.T)
     enc_inputs = xb.transpose(1, 0, 2)
     cache = []
     trans_states = [state]
@@ -260,15 +287,19 @@ def _batch_grad(model, xb, yb):
         grads["a"] += prev.T @ dz
         grads["bd"] += np.sum(dz, axis=0)
         dh += dz @ p["a"].T
-    # Backpropagation through the five sensory-driven recurrent updates.
-    for t in range(4, -1, -1):
+    # Backpropagation through the observed sensory sequence.
+    for t in range(enc_inputs.shape[0]-1, -1, -1):
         ht = enc_states[t]
         hp = np.zeros_like(ht) if t == 0 else enc_states[t - 1]
+        active=mask[:,t]
+        prior_dh=dh.copy()
         dz = dh * (1.0 - ht * ht)
+        dz[~active]=0.0
         grads["wx"] += enc_inputs[t].T @ dz
         grads["wh"] += hp.T @ dz
         grads["b"] += np.sum(dz, axis=0)
         dh = dz @ p["wh"].T
+        dh[~active]=prior_dh[~active]
     norm = np.sqrt(sum(float(np.sum(g * g)) for g in grads.values()))
     if norm > GRAD_CLIP:
         scale = GRAD_CLIP / (norm + 1e-12)
@@ -329,7 +360,10 @@ def load_checkpoint(path, kind="F"):
     data = np.load(path, allow_pickle=False)
     first = data["p_wx"]
     if kind == "FF_direct":
-        model=DirectTrajectoryBaseline(first.shape[0]//5,seed=0,hidden=first.shape[1])
+        config=json.loads(data["config_json"].item())
+        inferred_seq_len=first.shape[0]//len(data["input_mean"])
+        seq_len=int(config.get("sequence_length",config.get("input_sequence_length",inferred_seq_len)))
+        model=DirectTrajectoryBaseline(first.shape[0]//seq_len,seed=0,hidden=first.shape[1],sequence_length=seq_len)
         model.params={k:data[f"p_{k}"] for k in ("wx","b","out","bo")}
         model.input_mean,model.input_scale=data["input_mean"],data["input_scale"]
         model.target_mean,model.target_scale=float(data["target_mean"]),float(data["target_scale"])
@@ -344,8 +378,10 @@ def load_checkpoint(path, kind="F"):
 def latent_probe_rows(model, train_x, train_items, eval_x, eval_items, seed):
     """Post-hoc probes on frozen states; probe labels do not update F/G/H."""
     def states(x):
-        z = (x - model.input_mean) / model.input_scale
-        return model._encode(z.transpose(1, 0, 2))[0]
+        raw=np.asarray(x);mask=np.ones(raw.shape[:2],dtype=bool)
+        z = (raw - model.input_mean) / model.input_scale
+        z[~mask]=0.0
+        return model._encode(z.transpose(1, 0, 2),mask.T)[0]
     tr, ev = states(train_x), states(eval_x)
     targets = {
         "position": (np.array([it["initial_position"] for it in train_items], float),
@@ -379,8 +415,10 @@ def latent_probe_rows(model, train_x, train_items, eval_x, eval_items, seed):
 
 def latent_cluster_row(model, eval_x, eval_items):
     """Descriptive silhouette-like score for command-pair grouping of frozen states."""
-    z=(eval_x-model.input_mean)/model.input_scale
-    states=model._encode(z.transpose(1,0,2))[0]
+    raw=np.asarray(eval_x);mask=np.ones(raw.shape[:2],dtype=bool)
+    z=(raw-model.input_mean)/model.input_scale
+    z[~mask]=0.0
+    states=model._encode(z.transpose(1,0,2),mask.T)[0]
     if len(states)<3:
         return {"mean_within_distance":float("nan"),"mean_nearest_between_distance":float("nan"),"mean_silhouette":float("nan")}
     states=states-states.mean(0)

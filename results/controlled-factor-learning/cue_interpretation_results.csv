@@ -1,0 +1,3 @@
+test,cue_set,accuracy,n_train,n_test,feature_source
+isolated_cue_nearest_centroid,five independent cue classes,0.4125,120,80,same sensory_features audio suffix
+sequential_pair_nearest_centroid,direction then silence then speed,1.0,120,72,five consecutive sensory_features audio suffixes

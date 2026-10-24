@@ -54,6 +54,26 @@ F/G/H are trained by supervised position trajectory loss for intervals 1–12. I
 
 The longer-horizon configuration increases the world width to avoid clipping through h=18, so its pixel count and start-position distribution differ from the prior 129-pixel benchmark. An inference-only refinement check compares dt=0.05 s with two dt=0.025 s Euler substeps using the same learned G weights; it checks sensitivity but is not a convergence study. Compare within this new run and retain the original report as historical baseline; do not attribute cross-run score changes only to architecture.
 
+## Controlled observation-window validation
+
+The controlled runner `sensory_lab.controlled_factor` uses the same F/G/H transition equations and `FF_direct` baseline. An observation mask distinguishes real observations from zero-padded sequence capacity; masked rows do not update recurrent state or contribute encoder gradients. The complete acoustic direction/silence/speed sequence ends at tick 4 (0.25 s). Instruction-only prediction begins from visual frame 5; observed-motion prediction begins from frame 9. Training and evaluation cutoffs match in A and B. Condition C deliberately trains at tick 9 and evaluates at tick 4.
+
+Model inputs remain the output of `sensory_features` over raw waveform chunks and binary visual frames. The simulator retains direction/speed labels for trajectory targets and analysis only. The event-driven H comparison uses a fixed 0.05 hidden-state-change threshold at inference; candidate transitions are still computed to test the trigger, so a skipped assignment does not imply avoided candidate computation. The new run writes to a separate directory and must not overwrite prior factor-learning reports.
+
+## Model I: Structurally Adaptive Liquid
+
+`sensory_lab.liquid.LiquidNetwork` is an additional event-scheduled sparse graph; A-H and their results remain intact. Its active edges use a sparse adjacency map with signed weights. Every ordered pair remains eligible except self-pairs when disabled; degree limits cap simultaneous edges. A deterministic heap schedules sensory, transmission, and internal decay events. Each unit has bounded activation, adaptation, recent input, activity history, and timestamps. Exponential decay is mathematically continuous but evaluated lazily at events or state snapshots, so this is not continuous wall-clock computation.
+
+I0 freezes the graph and weights; I1 adds local bounded pre/post correlation plasticity; I2 adds sampled activity-coincidence formation and conservative weak/inactive pruning. Plasticity is separate from the linear readout. Experiment A isolates acoustic-cue fading memory before audio-visual association or motion generalization. Its design assumptions, limitations, staged plan, and outputs are documented in `liquid_architecture.md` and `results/liquid/LIQUID_ARCHITECTURE_REPORT.md`.
+
+## Independent acoustic-cue and factor-learning experiment
+
+`python -m sensory_lab.factor_cli --output results/factor-learning` runs a distinct experiment over the same F/G/H transition equations and a near parameter-matched direct trajectory baseline. The vocabulary is simulator-side metadata; observations contain only the existing visual array, raw waveform chunk, and timestamp. Combined cues arrive sequentially as direction, a short silence, and speed. The cue probe validates the ordered waveform features before any model training.
+
+The strict protocol excludes `LEFT + SPEED_2` and `RIGHT + SPEED_3` from direction-focused, speed-focused, and combined training. This makes balanced directions at speeds 2 and 3 impossible in strict speed-focused training; the resulting speed/direction correlation is reported as a confound. The separate transfer protocol balances those isolated speed experiences but consequently exposes the withheld physical motions. Curriculum and shuffled models use the same examples, initialization, and optimizer update count. At the largest training size, the historical cue is crossed with both schedules to estimate the acoustic-representation-by-schedule interaction; combined-only controls span all sample sizes.
+
+Test observations stop before visible motion and zero-padded inputs are skipped during recurrent assimilation. Models then roll out without later sensory data. Results include error at each horizon, familiar and held-out factor probes, paired cue interventions, training and inference cost, active updates, event-detection and state-update times, traced per-pass allocation, and an observed whole-process peak working set. The generated report distinguishes these measurements from interpretations and preserves prior benchmark artifacts.
+
 ## Development phases
 
 1. **v0.1:** raw sensory streams and A–D processing with an auditory-only solvable cue task. Wiring baseline.

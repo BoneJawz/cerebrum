@@ -1,0 +1,6 @@
+concept_id,concept_name,waveform_id,cue_category,frequencies_hz,duration_ticks,nominal_amplitude
+DIR_L,LEFT,tone_pair_01,direction,320.0;880.0,2,0.5
+DIR_R,RIGHT,tone_pair_02,direction,880.0;480.0,2,0.5
+SPD_1,SPEED_1,tone_pair_03,speed,440.0;840.0,2,0.5
+SPD_2,SPEED_2,tone_pair_04,speed,760.0;320.0,2,0.5
+SPD_3,SPEED_3,tone_pair_05,speed,560.0;680.0,2,0.5

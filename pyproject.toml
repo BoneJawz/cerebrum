@@ -15,5 +15,8 @@ sensory-lab-viewer = "sensory_lab.viewer:main"
 sensory-lab-research = "sensory_lab.advanced_cli:main"
 sensory-lab-diagnose = "sensory_lab.diagnostic_cli:main"
 sensory-lab-adaptive = "sensory_lab.adaptive_cli:main"
+sensory-lab-factor = "sensory_lab.factor_cli:main"
+sensory-lab-controlled-factor = "sensory_lab.controlled_factor:main"
+sensory-lab-liquid = "sensory_lab.liquid_experiment:main"
 [tool.setuptools.packages.find]
 where = ["src"]

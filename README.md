@@ -65,6 +65,18 @@ This adds F (trainable discrete recurrence), G (trainable Euler-integrated dynam
 
 The run includes five seeds, the six existing training sizes, a separate all-pairs training-distribution control, frozen-state probes and clustering diagnostics, an H event-threshold sweep, compute/latency measurements, plots and checkpoints by seed and training size. The report also records an inference-only G timestep refinement check. It writes `ADAPTIVE_DYNAMICS_REPORT.md` and adaptive CSV/PNG artifacts under `results/adaptive-dynamics/`. Longer-horizon evaluation uses a wider field than the historical 129-pixel run, so its scores are not a clean cross-run architecture comparison. See the generated report for results and uncertainty.
 
+## Independent acoustic-cue factor-learning benchmark
+
+Run the separate symbolic-cue experiment with:
+
+```powershell
+python -m sensory_lab.factor_cli --output results/factor-learning
+```
+
+It compares the historical combined tone/phase cue with sequential raw-waveform direction, silence, and speed cues. F/G/H and a parameter-matched direct baseline are trained under combined-only, curriculum, and shuffled schedules. The strict arm excludes the two held-out direction/speed pairs from every training phase. A transfer arm balances isolated speed experiences across directions and explicitly includes those withheld physical motions during factor pretraining; its scores are not strict compositional generalization.
+
+The run uses five seeds and 10/25/50/100/250/500 training episodes. At 500 episodes it also crosses the historical A cue with curriculum and shuffled schedules, alongside B, to estimate a cue-by-schedule interaction. It writes the vocabulary, per-horizon results, cue comparison, frozen-state probes, audio counterfactuals, sample-efficiency and compute tables, four plots, checkpoints, full config, and `FACTOR_LEARNING_REPORT.md`. The report documents the strict-arm cue/direction correlation, which follows from forbidding those held-out motions while also trying to balance directions at every speed. Do not interpret the transfer arm as an unseen-motion result.
+
 ### Measured compositional benchmark run
 
 On the 9-interval forecast, observed-pair MAE was 3.91 px (A), 2.71 (B), 2.62 (C), and 2.63 (D). Held-out-pair MAE was 32.15, 24.44, 25.86, and 25.03 px, respectively. With combined input, each processor substantially improved over either ablation on observed pairs; held-out recombination remained poor. None reached a 1 px held-out MAE threshold at the tested sample sizes. These results show that this experiment has not demonstrated compositional generalization or an efficiency advantage for event-driven computation. See the generated report for modality-specific scores, confidence intervals, sample-efficiency curves, and machine-specific timing.
@@ -110,3 +122,13 @@ These rows average over A–D and five seeds. The combined task's within-one-pix
 - The sensor streams remain synchronized at visual ticks. Independently timestamped asynchronous events are a later milestone.
 
 See `ARCHITECTURE.md` and `AGENTS.md` for contracts, safeguards, and the research roadmap.
+
+## Controlled observation-window validation
+
+`python -m sensory_lab.controlled_factor --output results/controlled-factor-learning` runs a matched-window validation in a new results directory, preserving the historical factor-learning outputs. It compares instruction-only input through tick 4, observed motion through tick 9, and the separately labeled B-train/A-evaluate transfer. Direction, silence, and speed audio occupies ticks 0–1, 2, and 3–4 respectively; both cues are complete at the tick-4 cutoff. A/C rollouts start from visual frame 5, while B starts from frame 9.
+
+The default study uses all six direction-speed combinations, five reproducible seeds, the existing 10/25/50/100/250/500 episode schedule, and F/G/H plus `FF_direct`. It records per-combination errors, cue diagnostics, hidden-state decoding, lightweight probes, compute costs, counterfactual cue changes, and figures. F/G/H transition equations remain unchanged. The first phase validates matched-window prediction before interpreting compositional generalization. See `results/controlled-factor-learning/CONTROLLED_FACTOR_LEARNING_REPORT.md` for measured outcomes and limits.
+
+## Model I liquid prototype
+
+`python -m sensory_lab.liquid_experiment --output results/liquid` runs the staged event-driven liquid Experiment A. The first milestone builds a sparse directed graph with asynchronous neuron updates, bounded local Hebbian-style weight adaptation, sampled structural plasticity, deterministic replay snapshots, and independent I0/I1/I2 controls. It measures cue retention using a post-hoc linear readout trained on separate episodes. This does not yet run the audiovisual association or motion-composition experiments; the staged rationale and assumptions are in `liquid_architecture.md`.
