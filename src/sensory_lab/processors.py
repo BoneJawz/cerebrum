@@ -3,12 +3,34 @@ from collections import deque
 import numpy as np
 from .contracts import Observation
 
+
+def sensory_features(o: Observation) -> np.ndarray:
+    """Fixed local summaries, signed waveform samples, and FFT magnitudes.
+
+    The signed samples retain phase/polarity information discarded by spectral
+    magnitudes. They are generic samples of the raw waveform, not cue labels.
+    """
+    audio = o.audio
+    zcr = np.mean(np.abs(np.diff(np.signbit(audio).astype(float)))) if len(audio)>1 else 0
+    audio_summary = np.array([np.mean(audio), np.sqrt(np.mean(audio**2)), zcr,
+                              np.mean(np.abs(audio))])
+    spectrum = 2.0 * np.abs(np.fft.rfft(audio, n=128))[1:50] / max(1, len(audio))
+    sample_indices = np.linspace(0, max(0, len(audio) - 1), 16, dtype=int)
+    waveform_samples = audio[sample_indices]
+    return np.concatenate([o.vision.astype(float), audio_summary,
+                           waveform_samples, spectrum])
+
+
 class Base:
+    audio_spectrum_bins = 49
+    audio_waveform_samples = 16
+
     def __init__(self, pixels: int = 33, hidden: int = 64, seed: int = 7):
         self.pixels = pixels
         self.hidden = hidden
+        self.feature_dim = pixels + 4 + self.audio_waveform_samples + self.audio_spectrum_bins
         rng = np.random.default_rng(seed)
-        self.w = rng.normal(0, 0.12, (hidden, pixels + 4))
+        self.w = rng.normal(0, 0.12, (hidden, self.feature_dim))
         a = rng.normal(0, 1., (hidden, hidden))
         self.a = a / max(1., np.linalg.norm(a, ord=2)) * 0.8
         self.reset()
@@ -24,11 +46,7 @@ class Base:
         self._last_input = None
 
     def input_features(self, o: Observation):
-        # Local fixed temporal auditory features only. No semantic labels.
-        audio = o.audio
-        zcr = np.mean(np.abs(np.diff(np.signbit(audio).astype(float)))) if len(audio)>1 else 0
-        audio_summary = np.array([np.mean(audio), np.sqrt(np.mean(audio**2)), zcr, np.mean(np.abs(audio))])
-        return np.concatenate([o.vision.astype(float), audio_summary])
+        return sensory_features(o)
 
     def _dt(self, t: float):
         dt = 0.05 if self._last_t is None else t - self._last_t
@@ -47,7 +65,7 @@ class FeedforwardHistory(Base):
         self.history.append(self.input_features(o))
         self._updates += 1
         parts = list(self.history)
-        padded = [np.zeros(self.pixels+4)] * (4-len(parts)) + parts
+        padded = [np.zeros(self.feature_dim)] * (4-len(parts)) + parts
         return np.concatenate(padded)
 
 class RecurrentFusion(Base):

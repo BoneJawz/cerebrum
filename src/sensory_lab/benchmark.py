@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from .contracts import Observation
-from .environment import LineWorld, WorldConfig
+from .environment import LineWorld, MOTION_START_TICK, WorldConfig
 from .processors import PROCESSORS
 
 
@@ -21,12 +21,19 @@ class BenchmarkConfig:
     seeds: int = 5
     prediction_tick: int = 4
     outcome_tick: int = 9
+    velocities: tuple[int, ...] = (1, 2, 3)
 
     def __post_init__(self):
         if min(self.train_episodes, self.test_episodes, self.hidden, self.seeds) < 1:
             raise ValueError("episode counts, hidden size and seeds must be positive")
-        if self.prediction_tick < 0 or self.outcome_tick <= self.prediction_tick:
-            raise ValueError("outcome_tick must follow the nonnegative prediction_tick")
+        if self.prediction_tick < 0 or self.prediction_tick >= MOTION_START_TICK:
+            raise ValueError("prediction_tick must precede visible motion")
+        if self.outcome_tick <= MOTION_START_TICK:
+            raise ValueError("outcome_tick must follow the movement start")
+        if not self.velocities or any(int(v) != v or v < 1 for v in self.velocities):
+            raise ValueError("velocities must be positive integer pixels per visual frame")
+        if len(set(self.velocities)) != len(self.velocities):
+            raise ValueError("velocities must not contain duplicates")
 
 
 class RidgeReadout:
@@ -58,18 +65,35 @@ class RidgeReadout:
 MODALITIES = ("vision_only", "audio_only", "combined")
 
 
-def create_data(world, count, seed, frequency_map, outcome_tick=9):
-    """Create command-conditioned motion trials and future-position targets."""
+TASKS = ("direction_only", "velocity_only", "direction_and_velocity")
+
+
+def _command_pairs(task, velocities):
+    if task == "direction_only":
+        return [(-1, velocities[0]), (1, velocities[0])]
+    if task == "velocity_only":
+        return [(1, velocity) for velocity in velocities]
+    if task == "direction_and_velocity":
+        return [(direction, velocity) for direction in (-1, 1) for velocity in velocities]
+    raise ValueError(f"unknown task: {task}")
+
+
+def create_data(world, count, seed, frequency_map, outcome_tick=9,
+                task="direction_and_velocity", velocities=(1, 2, 3)):
+    """Create cue-conditioned motion demonstrations and future positions."""
     rng = np.random.default_rng(seed)
     data = []
     for i in range(count):
-        direction = int(rng.choice([-1, 1]))
+        pairs = _command_pairs(task, velocities)
+        direction, velocity = pairs[int(rng.integers(0, len(pairs)))]
+        initial = world.sample_initial_position(rng)
         observations = world.episode(seed=seed*10000+i, direction=direction,
-                                    tone_hz=frequency_map[direction])
+                                    tone_hz=frequency_map[(direction, velocity)],
+                                    initial_position=initial, velocity=velocity)
         frame = observations[outcome_tick]
         pixels = np.arange(len(frame.vision), dtype=float)
         target_position = float(np.sum(pixels * frame.vision) / np.sum(frame.vision))
-        data.append((observations, target_position))
+        data.append((observations, target_position, direction, velocity))
     return data
 
 
@@ -81,7 +105,8 @@ def _ablate(observation: Observation, modality: str) -> Observation:
 
 def _features(processor, dataset, modality, prediction_tick):
     xs, ys, latencies, updates = [], [], [], 0
-    for observations, target in dataset:
+    for item in dataset:
+        observations, target = item[:2]
         processor.reset()
         for observation in observations[:prediction_tick + 1]:
             start = time.perf_counter_ns()
@@ -97,42 +122,49 @@ def _run_seed(config, world_config, seed):
     if config.outcome_tick >= world_config.ticks:
         raise ValueError("outcome_tick must be inside the episode")
     world = LineWorld(world_config)
-    codebook = np.random.default_rng(seed).permutation([140., 340.])
-    frequency_map = {-1: float(codebook[0]), 1: float(codebook[1])}
-    train = create_data(world, config.train_episodes, seed + 1, frequency_map, config.outcome_tick)
-    test = create_data(world, config.test_episodes, seed + 2, frequency_map, config.outcome_tick)
+    tones = np.linspace(110., 760., 2 * len(config.velocities))
+    codebook = np.random.default_rng(seed).permutation(tones)
+    commands = _command_pairs("direction_and_velocity", config.velocities)
+    frequency_map = {command: float(tone) for command, tone in zip(commands, codebook)}
     rows = []
-    for code, kind in PROCESSORS.items():
-        for modality in MODALITIES:
-            processor = kind(pixels=world_config.pixels, hidden=config.hidden, seed=seed)
-            tracemalloc.start()
-            cpu_start = time.process_time()
-            x_train, y_train, _, train_updates = _features(
-                processor, train, modality, config.prediction_tick)
-            readout = RidgeReadout()
-            readout.fit(x_train, y_train)
-            x_test, y_test, latencies, test_updates = _features(
-                processor, test, modality, config.prediction_tick)
-            scores = readout.predict(x_test)
-            cpu_seconds = time.process_time() - cpu_start
-            _, peak_bytes = tracemalloc.get_traced_memory()
-            tracemalloc.stop()
-            absolute_errors = np.abs(scores - y_test)
-            exact_accuracy = float(np.mean(np.rint(scores) == y_test))
-            rows.append({
+    for task in TASKS:
+        train = create_data(world, config.train_episodes, seed + 1, frequency_map,
+                            config.outcome_tick, task, config.velocities)
+        test = create_data(world, config.test_episodes, seed + 2, frequency_map,
+                           config.outcome_tick, task, config.velocities)
+        for code, kind in PROCESSORS.items():
+            for modality in MODALITIES:
+                processor = kind(pixels=world_config.pixels, hidden=config.hidden, seed=seed)
+                tracemalloc.start()
+                cpu_start = time.process_time()
+                x_train, y_train, _, train_updates = _features(
+                    processor, train, modality, config.prediction_tick)
+                readout = RidgeReadout()
+                readout.fit(x_train, y_train)
+                x_test, y_test, latencies, test_updates = _features(
+                    processor, test, modality, config.prediction_tick)
+                scores = readout.predict(x_test)
+                cpu_seconds = time.process_time() - cpu_start
+                _, peak_bytes = tracemalloc.get_traced_memory()
+                tracemalloc.stop()
+                absolute_errors = np.abs(scores - y_test)
+                exact_accuracy = float(np.mean(np.rint(scores) == y_test))
+                rows.append({
                 "seed": seed,
                 "train_episodes": config.train_episodes,
                 "test_episodes": config.test_episodes,
                 "prediction_tick": config.prediction_tick,
                 "outcome_tick": config.outcome_tick,
+                "velocities": ",".join(map(str, config.velocities)),
                 "pixels": world_config.pixels,
                 "visual_hz": world_config.visual_hz,
                 "audio_hz": world_config.audio_hz,
                 "episode_ticks": world_config.ticks,
-                "tone_for_left_direction_hz": frequency_map[-1],
-                "tone_for_right_direction_hz": frequency_map[1],
+                "audio_codebook_hz": ";".join(
+                    f"{d}:{v}={frequency_map[(d, v)]:.3f}" for d, v in commands),
                 "noise_std": world_config.noise_std,
                 "tone_amplitude": world_config.tone_amplitude,
+                "task": task,
                 "case": code,
                 "architecture": processor.name,
                 "modality": modality,
@@ -148,7 +180,7 @@ def _run_seed(config, world_config, seed):
                 "peak_traced_bytes": peak_bytes,
                 "hidden_units": config.hidden,
                 "readout_training_examples": int(readout.train.shape[0]),
-            })
+                })
     return rows
 
 

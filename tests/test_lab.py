@@ -44,6 +44,11 @@ def test_each_single_modality_is_insufficient_by_construction():
     assert all(np.array_equal(_ablate(a,'audio_only').vision,
                               _ablate(b,'audio_only').vision)
                for a,b in zip(left[:5],right[:5]))
+    slow=world.episode(19,1,140.,initial_position=16,velocity=1)
+    fast=world.episode(19,1,340.,initial_position=16,velocity=3)
+    assert all(np.array_equal(_ablate(a,'audio_only').vision,
+                              _ablate(b,'audio_only').vision)
+               for a,b in zip(slow[:5],fast[:5]))
     # Same direction, cue, seed, phase and noise but different initial scenes:
     # audio-only input is identical while the resulting positions differ.
     near=world.episode(19,1,140.,initial_position=12)
@@ -53,19 +58,26 @@ def test_each_single_modality_is_insufficient_by_construction():
                for a,b in zip(near[:5],far[:5]))
     center=lambda frame: np.sum(np.arange(len(frame.vision))*frame.vision)/np.sum(frame.vision)
     assert center(left[9]) != center(right[9])
+    assert center(slow[9]) != center(fast[9])
     assert center(near[9]) != center(far[9])
 
 def test_combined_task_metrics_and_outputs(tmp_path):
-    rows=run(BenchmarkConfig(100,60,31,24,1),output=tmp_path/'multi.csv')
-    assert len(rows)==12
+    rows=run(BenchmarkConfig(160,80,31,24,1),output=tmp_path/'multi.csv')
+    assert len(rows)==36
     assert {row['modality'] for row in rows} == {'vision_only','audio_only','combined'}
+    assert {row['task'] for row in rows} == {'direction_only','velocity_only','direction_and_velocity'}
     assert all(0 <= row['within_1_pixel_accuracy'] <= 1 for row in rows)
     assert all(row['active_updates'] > 0 and row['median_step_latency_us'] >= 0
                and row['peak_traced_bytes'] > 0 for row in rows)
-    combined=[row['within_1_pixel_accuracy'] for row in rows if row['modality']=='combined']
-    ablations=[row['within_1_pixel_accuracy'] for row in rows if row['modality']!='combined']
-    assert max(combined) > 0.7
-    assert all(score < 0.9 for score in ablations)
+    for task in ('direction_only','velocity_only','direction_and_velocity'):
+        combined=[row['within_1_pixel_accuracy'] for row in rows
+                  if row['task']==task and row['modality']=='combined']
+        assert np.mean(combined) > 0.6
+    combined_error=np.mean([row['mean_absolute_error_pixels'] for row in rows
+                            if row['modality']=='combined'])
+    ablation_error=np.mean([row['mean_absolute_error_pixels'] for row in rows
+                            if row['modality']!='combined'])
+    assert combined_error < ablation_error
 
 def test_visual_movement_and_apparent_width():
     env=LineWorld(WorldConfig())
@@ -73,6 +85,14 @@ def test_visual_movement_and_apparent_width():
     b=env.episode(3,-1,140)
     assert np.array_equal(a[0].vision,b[0].vision)
     assert not np.array_equal(a[-1].vision,b[-1].vision)
+
+def test_discrete_velocity_scales_visual_displacement():
+    world=LineWorld(WorldConfig())
+    slow=world.episode(13,1,140.,initial_position=16,velocity=1)
+    fast=world.episode(13,1,340.,initial_position=16,velocity=3)
+    center=lambda frame: np.sum(np.arange(len(frame.vision))*frame.vision)/np.sum(frame.vision)
+    assert center(slow[6])-center(slow[5]) == 1
+    assert center(fast[6])-center(fast[5]) == 3
 
 def test_viewer_keeps_heldout_truth_separate_until_reveal():
     session=ViewerSession(BenchmarkConfig(20,4,17,8,1))
@@ -86,4 +106,6 @@ def test_viewer_keeps_heldout_truth_separate_until_reveal():
     assert len(predictions)==12
     assert all('target' not in item and np.isfinite(item['predicted_position'])
                for item in predictions)
-    assert np.isfinite(session.reveal(0)['target_position'])
+    truth=session.reveal(0)
+    assert np.isfinite(truth['target_position'])
+    assert truth['velocity'] in (1,2,3)

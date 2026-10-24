@@ -1,6 +1,6 @@
-# Multisensory Dynamics Lab — v0.2
+# Multisensory Dynamics Lab — v0.3
 
-A CPU-first benchmark for combining a binary one-dimensional visual stream with raw acoustic waveforms. It is a synthetic computational experiment, not a biological brain model or a test of subjective experience.
+A CPU-first benchmark for combining binary one-dimensional vision with raw acoustic waveforms. It is a synthetic computational experiment, not a biological brain model or a test of subjective experience.
 
 ## Run
 
@@ -9,19 +9,54 @@ Requires Python 3.10+, NumPy, and pytest for development.
 ```powershell
 python -m pip install -e ".[dev]"
 python -m pytest -q
-python -m sensory_lab.cli --train 160 --test 80 --seeds 5 --seed 42 --out results/v0.2.csv
-python -m sensory_lab.viewer --train 160 --test 60 --seed 42
+python -m sensory_lab.cli --train 160 --test 80 --seeds 5 --seed 42 --velocities 1,2,3 --out results/v0.3-velocity.csv
+python -m sensory_lab.viewer --train 160 --test 60 --seed 42 --velocities 1,2,3
 ```
 
-The viewer is at `http://127.0.0.1:8765` while its command is running. It plays and animates full training demonstrations, fits 12 readouts when requested, then shows initial held-out scenes and audio cues. Ask for predictions before revealing the outcome frame and target.
+The viewer runs at `http://127.0.0.1:8765`. It plays full training demonstrations, fits 12 readouts when requested, then shows initial held-out scenes and audio. Ask for predictions before revealing the future visual outcome.
 
-## Task and information flow
+## V0.3 experiment
 
-During training, one of two raw tone frequencies consistently accompanies rightward movement, and the other accompanies leftward movement. The frequency-to-direction mapping is randomized for each experiment seed and shared between that seed's train and test split. Starting visual position, apparent object width, audio phase, and noise vary. The object begins moving after a stationary interval.
+Velocity is measured in pixels per visual frame. The default levels are 1, 2, and 3. Each trial begins from a randomly selected central position; motion starts at frame 5. The environment clamps objects at the retinal edges.
 
-For prediction, the processor sees only the initial visual scene and audio through frame 4, before visible movement. It predicts the object's center position at frame 9, after four frames of movement. The supervised target and future visual frame are kept out of processor inputs. Every processor is evaluated with vision only, audio only, or both; in ablations the omitted stream is zeroed.
+Each demonstration pairs the raw waveform with the actual movement direction and velocity. Tone frequencies encode the six direction–velocity pairs through a codebook randomized per seed and shared across that seed's train/test split. Processor inputs through frame 4 contain only the initial scene and audio cue. The target is the object's center at frame 9, after four visual movement steps.
 
-This makes the outcome depend on both modalities: audio identifies the movement direction but not the initial position; vision identifies the initial position but not the command. Predicting the later position requires combining the two. The benchmark uses a degree-two kernel ridge readout, fitted on each processor's fixed features. A–D do not learn their internal dynamics.
+Three task conditions isolate the factors:
+
+- `direction_only`: vary direction at the lowest configured speed.
+- `velocity_only`: vary speed while direction is fixed rightward.
+- `direction_and_velocity`: vary both direction and speed.
+
+Each task runs vision-only, audio-only, and combined-input ablations. The omitted sensor stream is zeroed. Neither stream alone determines the future position: audio gives the commanded movement but not the start position; vision gives the start position but not the command. A degree-two kernel ridge readout is trained on fixed features; A–D processor dynamics do not learn.
+
+The processors compute a fixed-bin waveform magnitude spectrum and 16 signed waveform samples from each raw audio chunk, alongside earlier waveform summaries. The samples preserve phase polarity, which magnitudes discard; all features are generic signal transforms and do not receive command labels.
+
+## Compositional generalization and efficiency study
+
+Run the expanded controlled benchmark with:
+
+```powershell
+python -m sensory_lab.advanced_cli --outdir results
+```
+
+It evaluates the four fixed processors A-D, E1 (a direct linear kernel-ridge baseline), and E2 (a privileged analytic oracle, reported only as a ceiling). The held-out direction/speed pairs are `(-1, 2)` and `(1, 3)`. All individual directions and speeds remain represented in supervised training, so the held-out set tests recombination. Vision-only, audio-only, and combined ablations are evaluated on observed and held-out pairs. Sample-efficiency curves use 10, 25, 50, 100, 250, and 500 training episodes. Five seeds use separate trajectory sets, and validation, normalization, and alpha selection exclude held-out pairs.
+
+The run writes `generalization_results.csv`, `sample_efficiency_results.csv`, `compute_benchmark.csv`, three PNG plots, and `EXPERIMENT_REPORT.md` under the selected output directory. The CSVs include per-seed records plus cross-seed means, standard deviations, and 95% t intervals.
+
+### Measured compositional benchmark run
+
+On the 9-interval forecast, observed-pair MAE was 3.91 px (A), 2.71 (B), 2.62 (C), and 2.63 (D). Held-out-pair MAE was 32.15, 24.44, 25.86, and 25.03 px, respectively. With combined input, each processor substantially improved over either ablation on observed pairs; held-out recombination remained poor. None reached a 1 px held-out MAE threshold at the tested sample sizes. These results show that this experiment has not demonstrated compositional generalization or an efficiency advantage for event-driven computation. See the generated report for modality-specific scores, confidence intervals, sample-efficiency curves, and machine-specific timing.
+
+The timed combined-input inference results over 240 episodes were:
+
+| Model | Median / p95 episode latency (ms) | CPU seconds | Active updates |
+|---|---:|---:|---:|
+| A | 0.774 / 0.913 | 0.2031 | 1,200 |
+| B | 0.782 / 0.896 | 0.2031 | 1,200 |
+| C | 0.885 / 0.946 | 0.2344 | 2,400 |
+| D | 0.852 / 0.969 | 0.2188 | 1,200 |
+
+D did not reduce active updates or CPU time versus B in this run. RSS is recorded as a process-level high-water mark, so it is not attributable to an individual model in these sequential timings. Measurements include Python instrumentation and should be compared only within this run.
 
 ## Interchangeable processors
 
@@ -30,30 +65,26 @@ This makes the outcome depend on both modalities: audio identifies the movement 
 - **C:** coupled leaky dynamics integrated with Euler substeps.
 - **D:** event-triggered coupled state updates.
 
-They share the `Processor` contract. The environment, readout, and metrics remain independent. A–D use the same hidden-unit count, train/test trials, and readout algorithm; their feature dimensions and computation differ, so this is not a strict compute-matched comparison.
-
-## Measurements
-
-The CSV includes reproducible seed and task settings, held-out exact-position and within-one-pixel accuracy, mean absolute position error in pixels, median/p95 processor-step latency, train/test CPU time, active update calls, and peak traced Python allocation. Stimulus generation is excluded from timing. Update calls are not FLOPs; traced allocation is not process RSS. Local timing is sensitive to OS scheduling and instrumentation overhead.
+They share the `Processor` contract. Environment, readout, and metrics remain independently replaceable. All use the same hidden-unit count, examples, and readout algorithm; operation counts and feature dimensions differ, so this is not a strict compute-matched architecture comparison.
 
 ## Initial measured run
 
-Command: `--train 160 --test 80 --seeds 5 --seed 42`, five randomized seeds and 80 held-out trials per seed and ablation (Windows, Python 3.10, NumPy 1.23.5). Values below are seed means. The source CSV contains all 60 rows.
+Command: `--train 160 --test 80 --seeds 5 --seed 42 --velocities 1,2,3`. Each CSV row contains one seed/task/processor/modality combination; the artifact has 180 rows, five seeds, and 400 held-out predictions per row.
 
-| Processor | Vision only MAE (px) | Audio only MAE (px) | Combined MAE (px) | Combined within 1 px | Combined median latency | Combined CPU time | Active updates / seed | Peak traced allocation |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| A | 4.00 | 2.85 | 0.45 | 0.882 | 61.0 µs | 0.784 s | 400 | 1.00 MB |
-| B | 3.99 | 2.77 | 0.20 | 0.990 | 67.1 µs | 0.794 s | 400 | 0.88 MB |
-| C | 3.99 | 2.76 | 0.20 | 0.990 | 86.2 µs | 0.659 s | 800 | 0.88 MB |
-| D | 3.99 | 2.83 | 0.20 | 0.990 | 76.1 µs | 0.631 s | 240 | 0.88 MB |
+| Task | Vision-only MAE | Audio-only MAE | Combined MAE | Combined within 1 px |
+|---|---:|---:|---:|---:|
+| Direction only | 3.92 px | 3.23 px | 0.61 px | 81.8% |
+| Velocity only | 2.88 px | 3.01 px | 0.59 px | 83.6% |
+| Direction + velocity | 8.12 px | 2.85 px | 0.62 px | 81.1% |
 
-Across seeds, combined within-one-pixel accuracy ranged from 0.762–0.963 for A, 0.963–1.000 for B and C, and 0.963–1.000 for D. Both ablations had much higher position error than combined input. This supports the intended multimodal dependency on this synthetic task. It does not show that the dynamical substrates outperform conventional models: the nonlinear readout performs the supervised fitting, and there is not yet a strict operation-matched baseline.
+These rows average over A–D and five seeds. The combined task's within-one-pixel score ranged from 78.8% to 83.8% across seeds; its mean absolute error ranged from 0.56 to 0.68 px. All three task conditions improve substantially with both modalities. See [results/v0.3-velocity.csv](results/v0.3-velocity.csv) for seed-level performance and compute measurements.
 
-## Scientific limits
+## Interpretation and limits
 
-- Tone-to-direction mapping is stable within each train/test seed split. This tests learning a randomized cue mapping from supervised examples, not adaptation to a mapping swap.
-- Kernel ridge may perform much of the nonlinear integration. Compare it against matched raw temporal features before attributing performance to A–D.
-- The task is synchronized; independent visual and audio timestamps, event queues, and late-event handling belong to a future asynchronous milestone.
-- Fixed random substrates do not test learning laws, few-shot transfer, or reusable structure discovery. No architecture superiority claim is supported by these results.
+- The larger velocity sweep exposes more difficult tone identification and future-position prediction than the two-command v0.2 task. Performance varies by architecture and task; the feedforward case is weaker on some conditions.
+- Boundary clamping affects high-speed outcomes near the ends of the visual array. Initial positions are sampled independently of command and speed; edge encounters are part of the task and are present in both splits.
+- The readout performs supervised fitting. These results do not show learning in the processor dynamics or an advantage over a strong conventional baseline.
+- Update counts are not FLOPs. Latency and CPU measurements are local and instrumentation-sensitive; peak `tracemalloc` allocation is not process RSS.
+- The sensor streams remain synchronized at visual ticks. Independently timestamped asynchronous events are a later milestone.
 
-See `ARCHITECTURE.md` and `AGENTS.md` for contracts, scientific safeguards, and the research roadmap.
+See `ARCHITECTURE.md` and `AGENTS.md` for contracts, safeguards, and the research roadmap.
