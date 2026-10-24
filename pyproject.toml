@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "multisensory-dynamics-lab"
+version = "0.2.0"
+description = "CPU-first modular 1D vision and raw audio research benchmark"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+[project.scripts]
+sensory-lab = "sensory_lab.cli:main"
+sensory-lab-viewer = "sensory_lab.viewer:main"
+[tool.setuptools.packages.find]
+where = ["src"]
