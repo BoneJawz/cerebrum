@@ -1,7 +1,0 @@
-{
-  "process_id": 4680,
-  "peak_working_set_bytes_observed": 72593408,
-  "scope": "whole sequential benchmark process",
-  "observation_point": "during seed 46 I2, before process completion",
-  "interpretation": "observed lower bound on this process run's peak working set; not attributable to an individual model"
-}

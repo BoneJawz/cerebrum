@@ -1,5 +1,0 @@
-case,architecture,early_direction_accuracy,test_episodes,processor_updates,feature_extraction_seconds,note
-A,A_feedforward_history,1.0,20,80,0.001547,Tone-direction mapping shared between train/test; readout is ridge
-B,B_recurrent_fusion,1.0,20,80,0.001974,Tone-direction mapping shared between train/test; readout is ridge
-C,C_coupled_dynamics,1.0,20,160,0.004245,Tone-direction mapping shared between train/test; readout is ridge
-D,D_event_driven,1.0,20,60,0.001942,Tone-direction mapping shared between train/test; readout is ridge

@@ -1,4 +1,0 @@
-seed,variant,pairing,exposures,weight_updates,formed_connections,pruned_connections,mean_abs_shared_weight_change,active_connections,mean_out_degree,active_neurons,processed_events,propagated_events,neuron_updates,learning_wall_ms,learning_cpu_ms
-42,I0,correct,0,0,0,0,0.0,72,3.0,0,0,0,0,0.0,0.0
-42,I0,correct,1,0,0,0,0.0,72,3.0,24,3676,3278,3676,59.8301,62.5
-42,I0,correct,2,0,0,0,0.0,72,3.0,24,7674,6812,7674,124.2414,140.625

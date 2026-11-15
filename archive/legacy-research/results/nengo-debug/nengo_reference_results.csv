@@ -1,6 +1,0 @@
-seed,stage,metric,value
-42,reference,recall_rmse,0.7386328509410669
-42,reference,recall_norm_mean,0.0
-42,reference,training_error_rmse,0.7387116841176151
-42,reference,encoder_change_l2,418.27470591520824
-42,reference,cpu_seconds,0.5230904999989434
