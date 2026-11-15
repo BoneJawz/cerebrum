@@ -1,22 +1,20 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 [project]
 name = "multisensory-dynamics-lab"
-version = "0.3.0"
-description = "CPU-first modular 1D vision and raw audio research benchmark"
+version = "0.2.0"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.24"]
+dependencies = ["numpy==1.23.5", "brian2==2.6.0", "matplotlib==3.9.0"]
 [project.optional-dependencies]
-dev = ["pytest>=7", "matplotlib>=3.7"]
+dev = ["pytest==9.1.1"]
 [project.scripts]
-sensory-lab = "sensory_lab.cli:main"
-sensory-lab-viewer = "sensory_lab.viewer:main"
-sensory-lab-research = "sensory_lab.advanced_cli:main"
-sensory-lab-diagnose = "sensory_lab.diagnostic_cli:main"
-sensory-lab-adaptive = "sensory_lab.adaptive_cli:main"
-sensory-lab-factor = "sensory_lab.factor_cli:main"
-sensory-lab-controlled-factor = "sensory_lab.controlled_factor:main"
-sensory-lab-liquid = "sensory_lab.liquid_experiment:main"
+mdl-association = "mdl.cli:main"
+mdl-live = "mdl.live_dashboard:main"
+mdl-continuous-learning = "mdl.continuous_learning_cli:main"
+mdl-visual-sensory = "mdl.visual_sensory_cli:main"
+mdl-distributed-visual = "mdl.distributed_visual_cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
