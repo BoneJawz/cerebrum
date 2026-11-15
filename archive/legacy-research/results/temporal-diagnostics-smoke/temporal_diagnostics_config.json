@@ -1,0 +1,111 @@
+{
+  "seeds": [
+    42,
+    43,
+    44,
+    45,
+    46
+  ],
+  "positions": [
+    -1,
+    0,
+    1
+  ],
+  "train_per_position": 2,
+  "validation_per_position": 2,
+  "test_per_position": 2,
+  "splits_are_disjoint_episodes": true,
+  "liquid_variant": "I0",
+  "liquid_config": {
+    "neurons": 64,
+    "initial_out_degree": 6,
+    "max_out_degree": 8,
+    "max_connections": 512,
+    "allow_self_connections": false,
+    "tau_seconds": 0.2,
+    "adaptation_tau_seconds": 0.6,
+    "adaptation_gain": 0.04,
+    "emit_threshold": 0.035,
+    "resting_threshold": 0.012,
+    "internal_interval_seconds": 0.05,
+    "transmission_delay_seconds": 0.005,
+    "max_queue_size": 100000,
+    "max_events_per_advance": 250000,
+    "max_sensory_targets": 8,
+    "weight_limit": 1.0,
+    "weight_learning_rate": 0.003,
+    "weight_decay": 0.001,
+    "structural_interval_seconds": 0.25,
+    "candidate_pairs_per_update": 96,
+    "candidate_utility_threshold": 0.0005,
+    "candidate_ema_rate": 0.25,
+    "minimum_connection_lifetime_seconds": 1.0,
+    "prune_after_inactive_seconds": 3.0,
+    "prune_weight_threshold": 0.015,
+    "prune_utility_threshold": 0.008
+  },
+  "feature_dimensions": {
+    "vision": 199,
+    "audio_summary": 4,
+    "audio_waveform_samples": 16,
+    "audio_fft_bins": 49,
+    "full_input": 268,
+    "audio_only_input": 69
+  },
+  "sample_rate_hz": 2000,
+  "chunk_samples": 100,
+  "visual_event_rate_hz": 20,
+  "token_ticks": 4,
+  "token_seconds": 0.2,
+  "silence_gap_ticks": 2,
+  "silence_gap_seconds": 0.1,
+  "instruction_ticks": 16,
+  "instruction_seconds": 0.8,
+  "alphas": [
+    0.01,
+    0.1,
+    1.0,
+    10.0,
+    100.0
+  ],
+  "alpha_selection": "validation exact accuracy; ties prefer smaller alpha",
+  "waveform_variation": {
+    "gain": [
+      0.85,
+      1.15
+    ],
+    "circular_shift_samples": [
+      -5,
+      5
+    ],
+    "additive_gaussian_noise_sd": 0.01
+  },
+  "readouts": [
+    "raw acoustic features",
+    "snapshot timepoints",
+    "ordered full trajectory",
+    "mean",
+    "max absolute activation",
+    "time integral",
+    "per-neuron event counts",
+    "fixed 64-dimensional trajectory random projection",
+    "250-ms causal EW accumulator"
+  ],
+  "projection_conditions": {
+    "P0": "existing one-target signed random mapping",
+    "P1": "round-robin one-target signed map; Frobenius energy matched",
+    "P2": "four-target sparse signed map; Frobenius energy matched",
+    "P3": "orthogonal fixed 64-D projection without liquid dynamics"
+  },
+  "event_sweep": [
+    "default",
+    "tau=0.10",
+    "tau=0.40",
+    "emit=0.020",
+    "emit=0.060"
+  ],
+  "checkpoint_C": {
+    "mean_test_accuracy_min": 0.8,
+    "per_seed_test_accuracy_min": 0.7
+  }
+}

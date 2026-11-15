@@ -1,0 +1,16 @@
+seed,seed_role,pattern_i,pattern_j,voltage_cosine
+42,development,A_vertical,B_horizontal,0.8133531544330431
+42,development,A_vertical,C_diagonal,0.7705825334791845
+42,development,B_horizontal,C_diagonal,0.7727771695588648
+43,development,A_vertical,B_horizontal,0.8604560508166412
+43,development,A_vertical,C_diagonal,0.7113613348132858
+43,development,B_horizontal,C_diagonal,0.8325754129149435
+44,development,A_vertical,B_horizontal,0.8765483240627195
+44,development,A_vertical,C_diagonal,0.7722362879204114
+44,development,B_horizontal,C_diagonal,0.7683473166371677
+45,development,A_vertical,B_horizontal,0.8191219786380799
+45,development,A_vertical,C_diagonal,0.7752025329786791
+45,development,B_horizontal,C_diagonal,0.8715175063241688
+46,development,A_vertical,B_horizontal,0.7542698966050364
+46,development,A_vertical,C_diagonal,0.8017837257376589
+46,development,B_horizontal,C_diagonal,0.7657184772014674

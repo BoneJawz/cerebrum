@@ -1,11 +1,9 @@
-# Neural learning foundation instructions
+# MDL neural-core instructions
 
-The active stack is a small Brian2/NumPy association baseline. Historical sensory-lab models, experiments, reports, and results are preserved under `archive/legacy-research/` and must not be deleted or silently rewritten.
-
-- Use deterministic seeds and report seed-level results; never invent benchmark values.
-- Keep stimulus generation, neural dynamics, learning rule, readout, and metrics replaceable.
-- Inputs are raw spike events/arrays; simulator labels and target indices must not enter processor inputs.
-- The first learning rule is established pair-based STDP. Do not add structural plasticity, liquid-state mechanisms, neuromodulation, or Model I changes in this milestone.
-- Distinguish biological-time simulation from wall-clock performance and instrument both when benchmarking.
-- Compare no-learning, correct-teacher, and mismatched-teacher controls. Treat failure as a useful result.
-- CPU-first; keep the Brian2 runtime in NumPy mode and pin dependencies.
+- The canonical implementation is the CPU/NumPy Brian2 network in `src/mdl/`.
+- Preserve the 25-channel binary visual input, 3 auditory spike channels, sparse fixed visual projection, and 18-cell default LIF population.
+- Keep the established membrane and pair-based STDP equations unchanged unless a separately reviewed experiment explicitly authorizes a change.
+- Keep labels and targets outside the neural input API. Sensory inputs are binary arrays and spike-channel events.
+- Use deterministic seeds, report seed-level results, and keep biological simulation time distinct from wall-clock time.
+- Keep configuration, sensory encoding, neural dynamics, plasticity, persistence, and tests as small replaceable modules.
+- Do not add dashboards, pretrained encoders, recurrence, structural plasticity, new populations, or a general plugin framework to the neural core.

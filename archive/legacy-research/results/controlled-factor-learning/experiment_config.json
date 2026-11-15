@@ -1,0 +1,73 @@
+{
+  "seed": 42,
+  "seeds": 5,
+  "sizes": [
+    10,
+    25,
+    50,
+    100,
+    250,
+    500
+  ],
+  "epochs": 40,
+  "test_per_combo": 20,
+  "windows": {
+    "A_instruction_only": 4,
+    "B_observed_motion": 9,
+    "C_transfer_eval": 4
+  },
+  "sequence_length": 10,
+  "audio_hz": 2000,
+  "visual_hz": 20,
+  "audio_samples_per_tick": 100,
+  "cue_segments": {
+    "direction": [
+      0,
+      2
+    ],
+    "silence": [
+      2,
+      3
+    ],
+    "speed": [
+      3,
+      5
+    ]
+  },
+  "horizons": [
+    1,
+    3,
+    6,
+    9,
+    12,
+    18
+  ],
+  "training_horizons": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12
+  ],
+  "strict_holdout": [
+    [
+      -1,
+      2
+    ],
+    [
+      1,
+      3
+    ]
+  ],
+  "transfer_protocol": "balanced factor exposure; held-out combined cue sequence may have appeared in factor pretraining",
+  "feature_extractor": "sensory_features: 177 binary vision cells + 4 audio summaries + 16 signed samples + 49 FFT magnitudes",
+  "python": "3.10.6",
+  "numpy": "1.23.5"
+}

@@ -1,128 +1,142 @@
+"""Canonical Brian2 visual-auditory LIF association network."""
 from __future__ import annotations
 
-import os
-from pathlib import Path
 import numpy as np
-# Brian2 inspects the user's home directory at import time even in NumPy mode.
-# Keep generated caches inside this reproducible project workspace.
-_cache = str(Path(__file__).resolve().parents[2] / ".brian")
-os.makedirs(_cache, exist_ok=True)
-os.environ["USERPROFILE"] = _cache
-os.environ["HOME"] = _cache
-from brian2 import (NeuronGroup, SpikeGeneratorGroup, Synapses, SpikeMonitor, StateMonitor,
-                    Network, ms, second, mV, start_scope, prefs, seed as brian_seed)
-from .stimuli import encode_visual_array
+from brian2 import (
+    Clock, Network, NeuronGroup, SpikeGeneratorGroup, SpikeMonitor, StateMonitor,
+    Synapses, ms, mV, prefs, second, start_scope, seed as brian_seed,
+)
+
+from .config import ModelConfig
+from .plasticity import AUDITORY_ON_POST, AUDITORY_ON_PRE, AUDITORY_SYNAPSE_MODEL
+from .sensory import encode_auditory_event, encode_visual_array
 
 
-class STDPAssociator:
-    """Small feed-forward LIF network with additive, bounded pair-based STDP."""
+class DistributedVisualAssociator:
+    """Fixed sparse visual and plastic auditory inputs converge on one LIF group."""
 
-    def __init__(self, seed: int = 0, learning: bool = True, synaptic_gain: float = 18.0,
-                 visual_sensory: bool = False, visual_gain_mv: float = 55.0):
+    def __init__(self, config: ModelConfig | None = None, *, seed: int | None = None,
+                 learning: bool = True):
+        if config is not None and seed is not None:
+            raise ValueError("pass either config or seed, not both")
+        self.config = config or ModelConfig(seed=42 if seed is None else int(seed))
+        self.seed = self.config.seed
         start_scope()
         prefs.codegen.target = "numpy"
-        brian_seed(seed)
-        self.learning = learning
-        self.visual_sensory = bool(visual_sensory)
-        self.input = SpikeGeneratorGroup(3, [], [] * ms, name="auditory_input")
-        self.visual_input = (SpikeGeneratorGroup(3, [], [] * ms, name="visual_sensory_input")
-                             if self.visual_sensory else None)
-        self.teacher = SpikeGeneratorGroup(3, [], [] * ms, name="visual_teacher")
-        self.output = NeuronGroup(
-            3, "dv/dt = (-70*mV-v)/(10*ms) : volt", threshold="v > -50*mV",
-            reset="v = -70*mV", refractory=5*ms, method="exact", name="visual_output")
-        self.output.v = -70 * mV
-        gain = float(synaptic_gain)
-        on_pre = "v_post += w*gain; apre += plasticity_enabled*0.01; w = clip(w + plasticity_enabled*apost, 0, 1)"
-        on_post = "apost += plasticity_enabled*(-0.012); w = clip(w + plasticity_enabled*apre, 0, 1)"
-        self.plastic = Synapses(
-            self.input, self.output,
-            "w : 1\n gain : volt (shared)\n plasticity_enabled : 1 (shared)\n dapre/dt = -apre/(20*ms) : 1 (event-driven)\n"
-            " dapost/dt = -apost/(20*ms) : 1 (event-driven)",
-            on_pre=on_pre, on_post=on_post,
-            name="auditory_visual_stdp")
-        self.plastic.connect()
-        self.plastic.gain = gain * mV
-        self.plastic.plasticity_enabled = 1 if learning else 0
-        self.plastic.w = np.random.default_rng(seed).uniform(0.05, 0.15, len(self.plastic.w))
-        if self.visual_sensory:
-            self.visual_syn = Synapses(
-                self.visual_input, self.output, "gain : volt (shared)",
-                on_pre="v_post += gain", name="visual_sensory_relay")
-            self.visual_syn.connect(j="i")
-            self.visual_syn.gain = float(visual_gain_mv) * mV
-            self.visual_monitor = SpikeMonitor(self.visual_input, name="visual_sensory_spikes")
-        else:
-            self.visual_syn = None
-            self.visual_monitor = None
-        self.teacher_syn = Synapses(self.teacher, self.output, on_pre="v_post += 55*mV", name="teacher")
-        self.teacher_syn.connect(j="i")
-        # Stable object names let Brian2 restore full-state checkpoints into a
-        # newly constructed network (auto-generated monitor names are process
-        # counter dependent and therefore do not match across sessions).
-        self.monitor = SpikeMonitor(self.output, name="output_spikes")
-        self.input_monitor = SpikeMonitor(self.input, name="auditory_spikes")
-        self.teacher_monitor = SpikeMonitor(self.teacher, name="teacher_spikes")
-        self.voltage = StateMonitor(self.output, "v", record=True, name="output_voltage")
-        objects = [self.input, self.teacher, self.output, self.plastic, self.teacher_syn,
-                   self.monitor, self.input_monitor, self.teacher_monitor, self.voltage]
-        if self.visual_sensory:
-            objects.extend((self.visual_input, self.visual_syn, self.visual_monitor))
-        self.net = Network(*objects)
+        brian_seed(self.seed)
+        self.clock = Clock(dt=self.config.timestep_ms * ms, name="mdl_clock")
 
-    def _set_spikes(self, group, indices, time: float | None):
-        if indices is None or time is None:
-            group.set_spikes(np.array([], dtype=int), np.array([]) * second, period=0 * second)
-        else:
-            values = np.asarray(indices, dtype=int).reshape(-1)
-            group.set_spikes(values, np.full(len(values), time) * second, period=0 * second)
+        c = self.config
+        self.visual_input = SpikeGeneratorGroup(
+            c.visual_inputs, [], [] * ms, clock=self.clock, name="grid_visual_input")
+        self.auditory_input = SpikeGeneratorGroup(
+            c.auditory_inputs, [], [] * ms, clock=self.clock, name="association_auditory_input")
+        self.associative = NeuronGroup(
+            c.associative_neurons,
+            f"dv/dt = ({c.rest_mv}*mV-v)/({c.membrane_tau_ms}*ms) : volt",
+            threshold=f"v > {c.threshold_mv}*mV",
+            reset=f"v = {c.rest_mv}*mV", refractory=c.refractory_ms * ms,
+            method="exact", clock=self.clock, name="associative_population")
+        self.associative.v = c.rest_mv * mV
 
-    def schedule(self, cue: int | None, target: int | None = None, jitter: float = 0.0,
-                 visual_array: np.ndarray | None = None) -> tuple[float | None, float | None]:
-        """Schedule auditory and either sensory-visual or legacy teacher events."""
-        if target is not None and visual_array is not None:
-            raise ValueError("a presentation cannot use both visual sensation and direct teacher drive")
-        if visual_array is not None and not self.visual_sensory:
-            raise ValueError("this network was constructed without a visual sensory pathway")
-        base = float(self.net.t / second)
-        audio_onset = base + 0.010 + float(jitter) if cue is not None else None
-        visual_onset = base + 0.025 if target is not None or visual_array is not None else None
-        self._set_spikes(self.input, None if cue is None else [cue], audio_onset)
-        active_visual = None if visual_array is None else encode_visual_array(visual_array)
-        if self.visual_sensory:
-            self._set_spikes(self.visual_input, active_visual, visual_onset if visual_array is not None else None)
-        self._set_spikes(self.teacher, None if target is None else [target], visual_onset if target is not None else None)
-        return audio_onset, visual_onset
+        rng = np.random.default_rng(np.random.SeedSequence([self.seed, 517]))
+        mask = rng.random((c.visual_inputs, c.associative_neurons)) < c.visual_probability
+        src, dst = np.where(mask)
+        self.visual_projection = Synapses(
+            self.visual_input, self.associative, "w : volt", on_pre="v_post += w",
+            clock=self.clock, name="fixed_random_visual_projection")
+        self.visual_projection.connect(i=src, j=dst)
+        self.visual_projection.w = c.visual_weight_mv * mV
+        self.visual_edges = np.column_stack((src, dst)).astype(int)
 
-    def advance(self, duration: float) -> None:
-        self.net.run(float(duration) * second)
+        self.auditory_stdp = Synapses(
+            self.auditory_input, self.associative, model=AUDITORY_SYNAPSE_MODEL,
+            on_pre=AUDITORY_ON_PRE, on_post=AUDITORY_ON_POST,
+            clock=self.clock, namespace={
+                "pre_increment": c.stdp_pre_increment,
+                "post_increment": c.stdp_post_increment,
+                "weight_min": c.weight_min,
+                "weight_max": c.weight_max,
+            }, name="auditory_to_associative_stdp")
+        self.auditory_stdp.connect()
+        self.auditory_stdp.gain = c.auditory_gain_mv * mV
+        self.auditory_stdp.tau = c.stdp_tau_ms
+        self.auditory_stdp.plasticity_enabled = int(bool(learning))
+        wrng = np.random.default_rng(np.random.SeedSequence([self.seed, 991]))
+        self.auditory_stdp.w = wrng.uniform(
+            c.auditory_weight_min, c.auditory_weight_max,
+            len(self.auditory_stdp.w))
 
-    def present(self, cue: int | None, target: int | None = None, duration: float = 0.060,
-                jitter: float = 0.0, visual_array: np.ndarray | None = None) -> np.ndarray:
-        """Present a cue and optional separate visual sensation or direct teacher."""
-        self.schedule(cue, target, jitter, visual_array)
-        before = np.asarray(self.monitor.count[:], dtype=int).copy()
-        self.advance(duration)
-        after = np.asarray(self.monitor.count[:], dtype=int).copy()
-        return after - before
-
-    def weights(self) -> np.ndarray:
-        return np.asarray(self.plastic.w[:], dtype=float).reshape(3, 3)
-
-    def reset_transient(self) -> None:
-        self.output.v = -70 * mV
-
-    def set_weights(self, matrix: np.ndarray) -> None:
-        values = np.asarray(matrix, dtype=float)
-        if values.shape != (3, 3):
-            raise ValueError("expected a 3x3 auditory-to-visual matrix")
-        self.plastic.w = values.reshape(-1)
-
-    def set_gain(self, gain_mv: float) -> None:
-        if gain_mv <= 0:
-            raise ValueError("gain must be positive")
-        self.plastic.gain = float(gain_mv) * mV
+        self.visual_spikes = SpikeMonitor(self.visual_input, name="grid_visual_spikes")
+        self.auditory_spikes = SpikeMonitor(self.auditory_input, name="association_auditory_spikes")
+        self.associative_spikes = SpikeMonitor(self.associative, name="associative_spikes")
+        self.voltage = StateMonitor(
+            self.associative, "v", record=True, name="associative_voltage")
+        self.net = Network(
+            self.visual_input, self.auditory_input, self.associative,
+            self.visual_projection, self.auditory_stdp, self.visual_spikes,
+            self.auditory_spikes, self.associative_spikes, self.voltage)
 
     def set_plasticity(self, enabled: bool) -> None:
-        self.plastic.plasticity_enabled = int(bool(enabled))
+        self.auditory_stdp.plasticity_enabled = int(bool(enabled))
 
+    def weights(self) -> np.ndarray:
+        return np.asarray(self.auditory_stdp.w[:], dtype=float).reshape(
+            self.config.auditory_inputs, self.config.associative_neurons).copy()
+
+    def run_event(self, *, cue: int | None = None, visual: np.ndarray | None = None,
+                  duration_s: float = 0.060, audio_delay_s: float = 0.010,
+                  visual_delay_s: float = 0.025) -> dict:
+        if duration_s <= 0:
+            raise ValueError("duration_s must be positive")
+        if cue is not None and not 0 <= cue < self.config.auditory_inputs:
+            raise ValueError("cue is outside the configured auditory channels")
+        visual_ids = (np.array([], dtype=int) if visual is None else
+                      encode_visual_array(visual, self.config.visual_shape))
+        start_s = float(self.net.t / second)
+        audio_onset = start_s + audio_delay_s if cue is not None else None
+        visual_onset = start_s + visual_delay_s if len(visual_ids) else None
+        ai, at = (encode_auditory_event(cue, audio_delay_s, self.config.auditory_inputs)
+                  if cue is not None else (np.array([], dtype=int), np.array([])))
+        self.auditory_input.set_spikes(ai, (start_s + at) * second, period=0 * second)
+        self.visual_input.set_spikes(
+            visual_ids, np.full(len(visual_ids), visual_delay_s + start_s) * second,
+            period=0 * second)
+
+        vi0, ai0 = len(self.voltage.t), len(self.associative_spikes.t)
+        vs0, as0 = len(self.visual_spikes.t), len(self.auditory_spikes.t)
+        self.net.run(duration_s * second)
+        times = np.asarray(self.voltage.t[vi0:] / second, dtype=float)
+        volts = np.asarray(self.voltage.v[:, vi0:] / mV, dtype=float)
+        spike_ids = np.asarray(self.associative_spikes.i[ai0:], dtype=int)
+        spike_times = np.asarray(self.associative_spikes.t[ai0:] / second, dtype=float)
+        visual_event_ids = np.asarray(self.visual_spikes.i[vs0:], dtype=int)
+        visual_event_times = np.asarray(self.visual_spikes.t[vs0:] / second, dtype=float)
+        audio_event_ids = np.asarray(self.auditory_spikes.i[as0:], dtype=int)
+        audio_event_times = np.asarray(self.auditory_spikes.t[as0:] / second, dtype=float)
+        peak = (np.maximum(np.max(volts, axis=1) - self.config.rest_mv, 0.0)
+                if volts.size else np.zeros(self.config.associative_neurons))
+        mean = (np.maximum(volts - self.config.rest_mv, 0.0).mean(axis=1)
+                if volts.size else np.zeros(self.config.associative_neurons))
+        return {
+            "start_s": start_s, "audio_onset_s": audio_onset,
+            "visual_onset_s": visual_onset, "voltage_times_s": times,
+            "voltage_mv": volts, "peak_depolarization_mv": peak,
+            "mean_depolarization_mv": mean,
+            "spike_counts": np.bincount(spike_ids, minlength=self.config.associative_neurons),
+            "spike_ids": spike_ids, "spike_times_s": spike_times,
+            "visual_ids": visual_event_ids, "visual_times_s": visual_event_times,
+            "auditory_ids": audio_event_ids, "auditory_times_s": audio_event_times,
+        }
+
+    def rest(self, duration_s: float = 0.2) -> None:
+        if duration_s < 0:
+            raise ValueError("duration_s cannot be negative")
+        self.auditory_input.set_spikes(np.array([], dtype=int), np.array([]) * second, period=0 * second)
+        self.visual_input.set_spikes(np.array([], dtype=int), np.array([]) * second, period=0 * second)
+        if duration_s:
+            self.net.run(duration_s * second)
+
+    def run(self, duration_s: float) -> None:
+        """Advance biological time without scheduling new sensory input."""
+        self.rest(duration_s)

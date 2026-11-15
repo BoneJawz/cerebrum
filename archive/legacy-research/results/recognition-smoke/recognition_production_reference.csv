@@ -1,0 +1,2 @@
+seed,model,train_labels,test_trials,exact_accuracy_within_half_unit,mean_absolute_error,readout_supervised
+42,I0_supervised_audio_scalar_readout,6,3,0.6666666666666666,0.42631315676284903,True

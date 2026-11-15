@@ -1,0 +1,13 @@
+{
+  "accuracy": 1.0,
+  "per_cue_accuracy": {
+    "DIR_L": 1.0,
+    "DIR_R": 1.0,
+    "SPD_1": 1.0,
+    "SPD_2": 1.0,
+    "SPD_3": 1.0
+  },
+  "n_train": 400,
+  "n_test": 200,
+  "ordered_chunk_swap_feature_distance": 3.0494524010551785
+}

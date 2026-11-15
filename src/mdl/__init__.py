@@ -1,5 +1,6 @@
-"""Minimal literature-based neural learning foundation."""
+"""Minimal CPU-first neural architecture research core."""
 
-from .stimuli import AssociationTask, make_task
+from .config import ARCHITECTURE_VERSION, ModelConfig
+from .network import DistributedVisualAssociator
 
-__all__ = ["AssociationTask", "make_task"]
+__all__ = ["ARCHITECTURE_VERSION", "ModelConfig", "DistributedVisualAssociator"]

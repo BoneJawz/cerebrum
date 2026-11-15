@@ -1,0 +1,6 @@
+seed,method,distinct_tokens,minimum_pairwise_feature_distance,distinct_pair_fraction,interpretation
+42,raw_waveform_feature_nearest_neighbor,8,2.257627465431238,1.0,feature-space separability diagnostic; not held-out-token generalization
+1051,raw_waveform_feature_nearest_neighbor,8,2.257627465431238,1.0,feature-space separability diagnostic; not held-out-token generalization
+2060,raw_waveform_feature_nearest_neighbor,8,2.257627465431238,1.0,feature-space separability diagnostic; not held-out-token generalization
+3069,raw_waveform_feature_nearest_neighbor,8,2.257627465431238,1.0,feature-space separability diagnostic; not held-out-token generalization
+4078,raw_waveform_feature_nearest_neighbor,8,2.257627465431238,1.0,feature-space separability diagnostic; not held-out-token generalization

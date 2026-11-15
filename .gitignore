@@ -8,6 +8,3 @@ results.csv
 *.egg-info/
 __pycache__/
 .pytest_cache/
-results/
-archive/
-docs/
